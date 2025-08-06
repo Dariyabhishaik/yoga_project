@@ -1,6 +1,8 @@
 streamlit
+streamlit-webrtc
 opencv-python
 mediapipe
-Pillow
+tensorflow
 numpy
-streamlit-webrtc
+pillow
+

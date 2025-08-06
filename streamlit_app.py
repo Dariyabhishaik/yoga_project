@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image
 import math
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
+import tensorflow as tf
 
 st.set_page_config(page_title="Yoga Pose Corrector", layout="centered")
 st.title("🧘‍♀️ AI Yoga Pose Detector and Corrector")
@@ -14,57 +15,25 @@ mp_pose = mp.solutions.pose
 pose = mp_pose.Pose()
 mp_drawing = mp.solutions.drawing_utils
 
-# Helper function to calculate angle between 3 points
-def calculate_angle(a, b, c):
-    a = np.array(a)
-    b = np.array(b)
-    c = np.array(c)
-    radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
-    angle = np.abs(radians*180.0/np.pi)
-    if angle > 180.0:
-        angle = 360 - angle
-    return angle
+# Load TensorFlow model and label map
+model = tf.keras.models.load_model("pose_model.h5")
+label_map = {0: "Tree Pose", 1: "Warrior Pose"}
 
-# Tree Pose validation
-def check_tree_pose(landmarks):
-    try:
-        left_hip = [landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].x,
-                    landmarks[mp_pose.PoseLandmark.LEFT_HIP.value].y]
-        left_knee = [landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].x,
-                     landmarks[mp_pose.PoseLandmark.LEFT_KNEE.value].y]
-        left_ankle = [landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].x,
-                      landmarks[mp_pose.PoseLandmark.LEFT_ANKLE.value].y]
+# Helper: Get 33 landmarks (x, y)
+def extract_landmark_array(landmarks):
+    keypoints = []
+    for lm in landmarks:
+        keypoints.append(lm.x)
+        keypoints.append(lm.y)
+    return np.array(keypoints).reshape(1, -1)
 
-        angle = calculate_angle(left_hip, left_knee, left_ankle)
-        st.write(f"Tree Pose Leg Angle: {int(angle)}°")
-        return 40 < angle < 70
-    except:
-        return False
-
-# Warrior Pose validation (sample logic)
-def check_warrior_pose(landmarks):
-    try:
-        right_shoulder = [landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].x,
-                          landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER.value].y]
-        right_elbow = [landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW.value].x,
-                       landmarks[mp_pose.PoseLandmark.RIGHT_ELBOW.value].y]
-        right_wrist = [landmarks[mp_pose.PoseLandmark.RIGHT_WRIST.value].x,
-                       landmarks[mp_pose.PoseLandmark.RIGHT_WRIST.value].y]
-
-        angle = calculate_angle(right_shoulder, right_elbow, right_wrist)
-        st.write(f"Warrior Pose Arm Angle: {int(angle)}°")
-        return 150 < angle < 180
-    except:
-        return False
-
-# Unified pose classifier
-def classify_pose(landmarks):
-    if check_tree_pose(landmarks):
-        return "Tree Pose", True
-    elif check_warrior_pose(landmarks):
-        return "Warrior Pose", True
-    else:
-        return "Unknown Pose", False
+# TensorFlow classification
+def classify_pose_with_model(landmarks):
+    input_data = extract_landmark_array(landmarks)
+    pred = model.predict(input_data)[0]
+    label_idx = np.argmax(pred)
+    confidence = pred[label_idx]
+    return label_map[label_idx], confidence > 0.8
 
 # Upload or Webcam mode
 option = st.radio("Choose input method:", ("Upload Image", "Use Webcam"))
@@ -79,7 +48,7 @@ if option == "Upload Image":
         results = pose.process(image_rgb)
         if results.pose_landmarks:
             mp_drawing.draw_landmarks(image_rgb, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-            pose_name, is_correct = classify_pose(results.pose_landmarks.landmark)
+            pose_name, is_correct = classify_pose_with_model(results.pose_landmarks.landmark)
 
             st.image(image_rgb, caption="Detected Pose", use_column_width=True)
             st.subheader(f"Pose: {pose_name}")
@@ -102,10 +71,12 @@ elif option == "Use Webcam":
 
             if results.pose_landmarks:
                 mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-                pose_name, is_correct = classify_pose(results.pose_landmarks.landmark)
+                pose_name, is_correct = classify_pose_with_model(results.pose_landmarks.landmark)
                 label = f"{pose_name} - {'Correct' if is_correct else 'Incorrect'}"
-                cv2.putText(image, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0) if is_correct else (0, 0, 255), 2, cv2.LINE_AA)
+                cv2.putText(image, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1,
+                            (0, 255, 0) if is_correct else (0, 0, 255), 2, cv2.LINE_AA)
             return image
 
     st.warning("Make sure your webcam is enabled and accessible.")
     webrtc_streamer(key="yoga", video_transformer_factory=VideoTransformer)
+
